@@ -1,4 +1,3 @@
-import pandas as pd
 import numpy as np
 import os
 import sys
@@ -15,6 +14,8 @@ mpl.rcParams.update(params)
 # from preprocess_vcf.ipynb
 col2idx = {'#CHROM': 0, 'POS': 1, 'REF': 2, 'ALT': 3, 'QUAL': 4, 'read': 5, 'hap1': 6, 'hap2': 7}
 
+
+# ------ Section 1: get allelic/genotypic information of each variant across the genome ------
 class Variant(object):
     """This is an internal class object to store variant info."""
     def __init__(self, chrName, pos, read, hap1, hap2):
@@ -222,6 +223,7 @@ def cnt2frac_byChr(hmt_all, chrom, window_num = 250):
     # use this returned window size for plotting
     return np.array(output).T, window
 
+# ------ Section 2: get copy number information from each variant across the genome ------
 def split_by_chrom_helper(vcf_filename):
     '''helper to split vcf file rows by chromosomes'''
     out_dict = defaultdict(list)
@@ -322,7 +324,7 @@ def smooth_copy_number(read_depth, window_num, avg_depth, overlap_size):
             
     return res
 
-def get_CN_data(file_name, window_num = 250, avg_depth = 69/4,overlap_size=2):
+def get_CN_data(file_name, avg_depth = 69/4, window_num = 250, overlap_size=2):
     # if only chromosome name is provided
     # the file must be in a subdirectory of the current script in a format of {chrom}.pileup.tsv
     directory = "pileup_byChr"
@@ -339,6 +341,7 @@ def get_CN_data(file_name, window_num = 250, avg_depth = 69/4,overlap_size=2):
     
     return list(CN)
 
+# ------ Section 3: get contig length information from processed BED file from PAF across the genome ------
 def get_ctginfo(cvg_list, window=10000):
     '''Get average contig length of one chromosome across its positions.
     Note that this length might be a partial contig block that's aligned to a part of the chromosome.'''
@@ -354,10 +357,13 @@ def get_ctginfo(cvg_list, window=10000):
         ctg_len[key] = mean(ctg_len_tmp[key])
     return ctg_len
 
-def get_plotting_data(hmt_all, chr_cvg1, chr_cvg2, chrom, window_num=250, ctg_window = 10000):
+
+
+# ------ Section 4: Plotting ------
+def get_plotting_data(hmt_all, chr_cvg1, chr_cvg2, chrom, hifi_read_depth, window_num=250, ctg_window = 10000):
     '''get ctg_len, CN, and hmt_fraction for one designated chromosome'''
     hmt_fraction, window = cnt2frac_byChr(hmt_all, chrom, window_num)
-    CN = get_CN_data(chrom, window_num)
+    CN = get_CN_data(chrom, avg_depth=hifi_read_depth, window_num=window_num)
     cvg1 = chr_cvg1[chrom]
     cvg2 = chr_cvg2[chrom]
     ctg_len = (get_ctginfo(cvg1, window=ctg_window),get_ctginfo(cvg2, window=ctg_window))
@@ -415,7 +421,7 @@ def integrate_plotting_helper(ctg_len, CN, hmt_fraction, window, chrom):
     plt.savefig(f'hmt.{chrom}.pdf',format='pdf',bbox_inches='tight')
     plt.close()
 
-def integrate_plotting(hmt_all, chr_cvg1, chr_cvg2, chrom, window_num=250, ctg_window = 10000):
+def integrate_plotting(hmt_all, chr_cvg1, chr_cvg2, chrom, hifi_read_depth, window_num=250, ctg_window = 10000):
     ctg_len, CN, hmt_fraction, window, chrom = get_plotting_data(hmt_all, chr_cvg1, chr_cvg2, 
                                                                  chrom, window_num, ctg_window)
     integrate_plotting_helper(ctg_len, CN, hmt_fraction, window, chrom)
@@ -423,8 +429,7 @@ def integrate_plotting(hmt_all, chr_cvg1, chr_cvg2, chrom, window_num=250, ctg_w
 
 
 # Everything together
-def haplotype_eval(processed_vcf, hap1aln_bed, hap2aln_bed, mode='gt'):
-    # maybe include hmt mode as well?
+def haplotype_eval(hifi_read_depth, processed_vcf, hap1aln_bed, hap2aln_bed):
     # check if pileup_byChr exists. If not, create directory and split vcf files.
     parent_dir = os.getcwd()
     directory = "pileup_byChr"
@@ -448,16 +453,13 @@ def haplotype_eval(processed_vcf, hap1aln_bed, hap2aln_bed, mode='gt'):
     
     for chrom in chroms:
         print(chrom)
-        integrate_plotting(hmt_all, chr_cvg1, chr_cvg2, chrom, window_num=200, ctg_window = 10000)
+        integrate_plotting(hmt_all, chr_cvg1, chr_cvg2, chrom, hifi_read_depth, window_num=200, ctg_window = 10000)
         
         
 argv = sys.argv
-if len(argv) < 4 or len(argv) > 5:
-    print('Usage: haplotypeEval.py [processed_vcf] [hap1aln_bed] [hap2aln_bed] [mode]')
+if len(argv) < 5 or len(argv) > 6:
+    print('Usage: haplotypeEval.py [HiFi_read_depth] [processed_vcf] [hap1aln_bed] [hap2aln_bed]')
     sys.exit(1)
-if len(argv) == 5:
-    mode = argv[4]
-else:
-    mode = 'gt'
-print(f'Running {argv[0]} on file(s) {argv[1:4]}')
-haplotype_eval(argv[1], argv[2], argv[3], mode)
+print(f'Running {argv[0]} on file(s) {argv[2:5]}')
+haplotype_eval(*argv[1:5])
+
