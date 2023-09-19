@@ -1,4 +1,5 @@
 from io import StringIO
+import sys
 col2idx = None
 
 def list_remove(inputList, indicesList):
@@ -63,6 +64,19 @@ def check_dr(chrom, pos, prev_flt, dr_filter):
     prev_flt = flt
     return is_in_dr, prev_flt
 
+def get_readkey(col2idx, words):
+    readkey = None
+    for key, value in col2idx.items():
+        flag = True
+        for i in range(len(words)):
+            if words[i] not in key:
+                flag = False
+        if flag:
+            print(key,value)
+            readkey = key 
+    return readkey
+            
+
 def read_vcf(file_name, ref_bp = 1, alt_num = 1, qual_thres = 5, depth_thres = 10, bed_file=None, out_file = None):
     '''
     A function to read in vcf files from htsbox-pileup-r345 and filter out 
@@ -89,13 +103,13 @@ def read_vcf(file_name, ref_bp = 1, alt_num = 1, qual_thres = 5, depth_thres = 1
     else:
         dr_filter = prev_flt = None
     line_count = pass1_count = pass2_count = pass3_count = pass4_count = 0
-    
+    readkey = None
     for line in open(file_name, "r"):
         if line.startswith("##"):
             continue
         parsed_line = line.strip("\n").split("\t")
+
         # Save col2idx -- won't be using ID, FILTER, INFO, FORMAT
-        # 0#CHROM 1POS 2ID 3REF 4ALT 5QUAL 6FILTER 7INFO 8FORMAT 9read.bam 10hap1.bam 11hap2.bam
         if line_count == 0 and line.startswith("#CHROM"):
             col2idx = {}
             lst = ['ID', 'FILTER', 'INFO', 'FORMAT']
@@ -104,9 +118,21 @@ def read_vcf(file_name, ref_bp = 1, alt_num = 1, qual_thres = 5, depth_thres = 1
                     skipped_idx.append(i)
                     continue
             list_remove(parsed_line, skipped_idx)
-#             for i in range(len(parsed_line)):
-#                 col2idx[parsed_line[i]] = i
-            col2idx = {'#CHROM': 0, 'POS': 1, 'REF': 2, 'ALT': 3, 'QUAL': 4, 'read': 5, 'hap1': 6, 'hap2': 7}
+            for i in range(len(parsed_line)):
+                colName = parsed_line[i]
+                if '/' in colName:
+                    colName = colName.split('/')[-1].strip('.bam')
+                if 'normal' in colName and 'read' in colName: # we have matched normal reads in the vcf in addition to tumor reads
+                    readkey = colName
+                col2idx[colName] = i
+            # if no matched normal, col2idx has 8 entries; else 11 entries with the normal reads and haps.
+            # col2idx = {'#CHROM': 0, 'POS': 1, 'REF': 2, 'ALT': 3, 'QUAL': 4, 'read': 5, 'hap1': 6, 'hap2': 7}
+            if readkey is None:
+                readkey = get_readkey(col2idx,['read'])
+            keys = col2idx.keys()
+            print(keys)
+            out_file.write('\t'.join(keys) + '\n')
+
         # Skip if encounter empty lines
         elif len(parsed_line) < 2:
             continue
@@ -122,14 +148,15 @@ def read_vcf(file_name, ref_bp = 1, alt_num = 1, qual_thres = 5, depth_thres = 1
             alt   = parsed_line[col2idx['ALT']]
             qual  = int(parsed_line[col2idx['QUAL']])
             
-            rd_info  = parsed_line[col2idx['read']]
+            rd_info  = parsed_line[col2idx[readkey]]
             depths   = [int(i) for i in rd_info.split(':')[1].split(',')]
             rd_depth = sum(depths)
             
             is_in_dr, prev_flt = check_dr(chrom, pos, prev_flt, dr_filter)
             can_write = True
             # pass if 1) #bp of REF > ref_bp or #num of ALT > alt_num or #bp of ALT > ref_bp (***scrutiny needed)
-            if len(ref) > ref_bp or len(alt.split(',')) > alt_num or len(alt.split(',')[0]) > ref_bp:
+            if len(ref) > ref_bp or any(len(alt_snp) > ref_bp for alt_snp in alt.split(',')):
+                # exclude len(alt.split(',')) > alt_num
                 pass1_count += 1
                 can_write = False
             # pass if 2) QUAL < qual_thres

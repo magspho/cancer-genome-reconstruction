@@ -289,6 +289,51 @@ def read_depth_from_vcf(file_name):
                 read_depth.append([int(parsed_line[col2idx['POS']]), *hap_depth])
     return read_depth
 
+def smooth_allele_freq(read_depth, window=1000000):
+    span = read_depth[-1][0]
+    res  = []
+    j = 0
+    for i in range(window, span+window, window):
+        hap1_depth = hap2_depth = 0
+        while j < len(read_depth):
+            curr = read_depth[j]
+            if curr[0] < i:
+                hap1_depth += curr[1]
+                hap2_depth += curr[2]
+                j += 1
+            else:
+                break
+        if hap1_depth != 0:
+            depth_sum = hap1_depth + hap2_depth
+            res.append([i, hap1_depth/depth_sum, hap2_depth/depth_sum])
+            
+    median_depth = stats.median(total_depth)
+#     print(min(total_depth))
+#     print(f'median depth: {median_depth}')
+    return res
+
+def plot_allele_freq(file_name, window=1000000):
+    tmp = file_name.split('/')[-1].split('.')
+    chrom = ['chr' in i for i in tmp]
+    chrName = [tmp[i] for i in range(len(chrom)) if chrom[i]][0]
+
+    read_depth = read_depth_from_vcf(file_name)
+    freq,median_depth = smooth_allele_freq(read_depth, window)
+    freq = np.array(freq).T
+    plt.figure(figsize=(20,5))
+    plt.plot(freq[0], freq[1], linewidth=2,linestyle='dashed',label ='Hap1')
+    plt.plot(freq[0], freq[2], linewidth=2,linestyle='dashed',label ='Hap2')
+
+    plt.xlabel("Position")
+    plt.ylabel("Allele Ratio")
+    plt.xticks(np.arange(0,freq[0][-1]+1000000,10000000),rotation=45)
+    plt.ticklabel_format(style='plain')
+    plt.legend()
+    plt.savefig(f'{chrName}.alleleFreq.pdf', format='pdf')
+    plt.show()
+    
+    return list(freq)
+
 def smooth_copy_number(read_depth, window_num, avg_depth, overlap_size):
     span = read_depth[-1][0]
     window = int(span/window_num)
