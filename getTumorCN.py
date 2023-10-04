@@ -184,19 +184,22 @@ def smooth_copy_number(read_depth, window_num, window_size, avg_depth, overlap_s
         while j < len(read_depth):
             curr = read_depth[j]
             # Record the next starting j
-            if j_flag and curr[0] > i+window/overlap_size:
+            # bug line: if j_flag and curr[0] > i+window/overlap_size:
+            if j_flag and curr[0] >= i:
                 next_j = j
                 j_flag = False
-                
-            if curr[0] < i:
+                break
+            elif curr[0] < i:
                 hap1_depth += curr[1]
                 hap2_depth += curr[2]
                 j += 1
                 occurence += 1
             else:
+                print(f"Error in smooth copy number at position {curr[0]} in bin {i}.")
                 break
         if hap1_depth != 0:
             depth_sum = hap1_depth + hap2_depth
+            # avg_depth = depth_sum / occurence / 4
             res.append([i, hap1_depth/occurence/avg_depth, hap2_depth/occurence/avg_depth])
     return res
 
@@ -260,6 +263,12 @@ def writeAF2file(AF, out_filename):
         csvwriter = csv.writer(f, delimiter='\t')
         csvwriter.writerows(AF)
 
+def get_chrName(filename):
+    tmp = filename.split('/')[-1].split('.')
+    chrom = ['chr' in i for i in tmp]
+    chrName = [tmp[i] for i in range(len(chrom)) if chrom[i]][0]
+    return chrName
+
 def usage():
     print("Usage: getTumorCN.py --tumor_read_depth [HiFi read depth of tumor sample] -t [directory to tumor pileup_byChr files]")
     print("Options:")
@@ -297,12 +306,19 @@ def main(argv):
         elif opt == '-n':
             for filename in glob(f'{arg}/chr*.pileup.tsv'):
                 normal_vcf_filenames.append(filename)
-        elif opt == '-w': window_num   = int(arg)
+        elif opt == '-w': 
+            print('Dynamic window size instead of static (1Mb)...')
+            print(f'Number of windows for each chromosome: {arg}')
+            window_num   = int(arg)
         elif opt == '-s': 
-            print(arg)
+            print(f'Number of sliding windows for each bin: {arg}')
             overlap_size = int(arg)
-        elif opt in ['--tumor-read-depth']:  tumor_avg_depth = float(arg)
-        elif opt in ['--normal-read-depth']: normal_avg_depth = float(arg)
+        elif opt in ['--tumor-read-depth']:  
+            print(f'Tumor avg read depth: {arg}')
+            tumor_avg_depth = float(arg)
+        elif opt in ['--normal-read-depth']:
+            print(f'Normal avg read depth: {arg}')
+            normal_avg_depth = float(arg)
     
     if len(tumor_vcf_filenames) == 0 and len(normal_vcf_filenames) == 0:
         print("VCF file error.")
@@ -313,11 +329,7 @@ def main(argv):
 
     if len(normal_vcf_filenames) > 0 and len(tumor_vcf_filenames) > 0:
         for tumor_vcf_filename in tumor_vcf_filenames:
-            # get current chrName
-            tmp = tumor_vcf_filename.split('/')[-1].split('.')
-            chrom = ['chr' in i for i in tmp]
-            chrName = [tmp[i] for i in range(len(chrom)) if chrom[i]][0]
-
+            chrName = get_chrName(tumor_vcf_filename)
             normal_vcf_filename = [s for s in normal_vcf_filenames if f'{chrName}.' in s][0]
             print(tumor_vcf_filename, normal_vcf_filename)
             # getCN&AF
@@ -331,6 +343,7 @@ def main(argv):
 
     elif len(tumor_vcf_filenames) > 0:
         for filename in tumor_vcf_filenames:
+            chrName = get_chrName(filename)
             print(filename)
             # getCN&AF
             tumor_CN,tumor_AF = get_CN_data(filename, tumor_avg_depth, window_num=window_num, overlap_size=overlap_size)
@@ -339,6 +352,7 @@ def main(argv):
 
     elif len(normal_vcf_filenames) > 0:
         for filename in normal_vcf_filenames:
+            chrName = get_chrName(filename)
             print(filename)
             # getCN&AF
             normal_CN,normal_AF = get_CN_data(filename, normal_avg_depth, window_num=window_num, overlap_size=overlap_size)

@@ -155,8 +155,8 @@ def read_vcf(file_name, ref_bp = 1, alt_num = 1, qual_thres = 5, depth_thres = 1
             is_in_dr, prev_flt = check_dr(chrom, pos, prev_flt, dr_filter)
             can_write = True
             # pass if 1) #bp of REF > ref_bp or #num of ALT > alt_num or #bp of ALT > ref_bp (***scrutiny needed)
-            if len(ref) > ref_bp or any(len(alt_snp) > ref_bp for alt_snp in alt.split(',')):
-                # exclude len(alt.split(',')) > alt_num
+            if len(ref) > ref_bp or len(alt.split(',')) > alt_num or any(len(alt_snp) > ref_bp for alt_snp in alt.split(',')):
+                # exclude len(alt.split(',')) > alt_num or not?
                 pass1_count += 1
                 can_write = False
             # pass if 2) QUAL < qual_thres
@@ -188,6 +188,6 @@ if len(argv) == 3:
     bed_file = argv[2]
 vcf_file = argv[1]
 
-out_file_name = f"processed.nodifficultregion.{vcf_file}"
+out_file_name = f"processed.{vcf_file}"
 with open(out_file_name, 'w') as f:
     read_vcf(vcf_file, bed_file=bed_file, out_file=f)
