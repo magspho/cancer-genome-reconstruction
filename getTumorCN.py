@@ -283,7 +283,7 @@ def usage():
 
 def main(argv):
     try:
-        opts, args = getopt.getopt(argv[1:],"t:n:w:s:", 
+        opts, args = getopt.getopt(argv[1:],"t:n:w:s:b:", 
                                ["tumor-read-depth=","normal-read-depth="])
     except getopt.GetoptError as err:
         # print help information and exit:
@@ -297,6 +297,7 @@ def main(argv):
     
     tumor_vcf_filenames  = []
     normal_vcf_filenames = []
+    window_size  = 1000000
     window_num   = None
     overlap_size = 2
     for opt, arg in opts:
@@ -306,10 +307,13 @@ def main(argv):
         elif opt == '-n':
             for filename in glob(f'{arg}/chr*.pileup.tsv'):
                 normal_vcf_filenames.append(filename)
-        elif opt == '-w': 
+        elif opt == '-b': 
             print('Dynamic window size instead of static (1Mb)...')
             print(f'Number of windows for each chromosome: {arg}')
             window_num   = int(arg)
+        elif opt == '-w': 
+            print(f'Window size for each chromosome: {arg}')
+            window_size = int(arg)
         elif opt == '-s': 
             print(f'Number of sliding windows for each bin: {arg}')
             overlap_size = int(arg)
@@ -334,7 +338,7 @@ def main(argv):
             print(tumor_vcf_filename, normal_vcf_filename)
             # getCN&AF
             tumor_CN, tumor_AF, normal_CN, normal_AF = get_tumorCN_matchedNormal(tumor_vcf_filename, tumor_avg_depth, 
-                normal_vcf_filename, normal_avg_depth, window_num=window_num, overlap_size=overlap_size)
+                normal_vcf_filename, normal_avg_depth, window_num=window_num, overlap_size=overlap_size, window_size=window_size)
             # write to individual files
             writeCN2file(tumor_CN, f'{chrName}.tumor.CN.tsv')
             writeCN2file(tumor_AF, f'{chrName}.tumor.AF.tsv')
@@ -346,7 +350,7 @@ def main(argv):
             chrName = get_chrName(filename)
             print(filename)
             # getCN&AF
-            tumor_CN,tumor_AF = get_CN_data(filename, tumor_avg_depth, window_num=window_num, overlap_size=overlap_size)
+            tumor_CN,tumor_AF = get_CN_data(filename, tumor_avg_depth, window_num=window_num, overlap_size=overlap_size, window_size=window_size)
             writeCN2file(tumor_CN, f'{chrName}.tumor.CN.tsv')
             writeCN2file(tumor_AF, f'{chrName}.tumor.AF.tsv')
 
@@ -355,7 +359,7 @@ def main(argv):
             chrName = get_chrName(filename)
             print(filename)
             # getCN&AF
-            normal_CN,normal_AF = get_CN_data(filename, normal_avg_depth, window_num=window_num, overlap_size=overlap_size)
+            normal_CN,normal_AF = get_CN_data(filename, normal_avg_depth, window_num=window_num, overlap_size=overlap_size, window_size=window_size)
             writeCN2file(normal_CN, f'{chrName}.normal.CN.tsv')
             writeCN2file(normal_AF, f'{chrName}.normal.AF.tsv')
     else:

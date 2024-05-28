@@ -112,6 +112,7 @@ def read_vcf(file_name, ref_bp = 1, alt_num = 1, qual_thres = 3, depth_thres = 1
     readkey = None
     for line in open(file_name, "r"):
         if line.startswith("##"):
+            out_file.write(line)
             continue
         parsed_line = line.strip("\n").split("\t")
 

@@ -86,10 +86,11 @@ def get_info(parsed_line, depth_thres=3):
     # th1_gt or th2_gt might be 1 since one haplotype from h2 may go to h1...?
     if tr_gt == 1 and (th1_gt == th2_gt or th1_gt == '.' or th2_gt == '.'): return None
     if th1_gt == 1 or th2_gt == 1: return None
+    if (tr_gt == 0 or tr_gt == 2) and isinstance(th1_gt,int) and isinstance(th2_gt,int) and th1_gt != th2_gt: return None
 
     # pass variant "QC", saving information...
-    # "hemizygous" in tumor_hap2
     th1_dep = th2_dep = 0
+    # "hemizygous" in tumor_hap2
     if th1_gt == '.':
         th1_dep = 0
         th2_dep = tr_dep[int(th2_gt/2)]
@@ -106,8 +107,8 @@ def get_info(parsed_line, depth_thres=3):
     elif tr_gt == 1 and th1_gt != th2_gt:
         th1_dep = tr_dep[int(th1_gt/2)]
         th2_dep = tr_dep[int(th2_gt/2)]
-    # else:
-        # print(f"Something wrong with hap/get_info. Check {parsed_line}.")
+    else:
+        print(f"Something wrong with hap/get_info. Check {parsed_line}.")
 
     variant = Variant(chrName, pos, nr_gt, nr_dep, tr_gt, tr_dep, th1_gt, th1_dep, th2_gt, th2_dep)
     return variant
@@ -128,12 +129,21 @@ def read_depth_from_vcf(vcf_filename, normal_avg_depth, depth_thres=1):
     for variant in variants:
         if variant:
             hap_depth = variant.normalize_read_depth(normal_avg_depth)
-            if -1 in hap_depth: # ambiguous phasing!
-                continue
             read_depth.append([variant.pos, *hap_depth])
     return read_depth
 
-def smooth_allele_freq(read_depth, window_num, window_size, overlap_size=2):
+def hetVar_separator(read_depth):
+    hetVar = []
+    homVar = []
+    for i in read_depth:
+        if i[1] == -1:
+            homVar.append(i)
+        else:
+            hetVar.append(i)
+    return hetVar, homVar
+
+def smooth_allele_freq(read_depth, window_num, window_size, overlap_size=1):
+    '''old ver.'''
     span = read_depth[-1][0]
     if window_num is not None:
         window = int(span/window_num)
@@ -146,15 +156,22 @@ def smooth_allele_freq(read_depth, window_num, window_size, overlap_size=2):
         while j < len(read_depth):
             curr = read_depth[j]
             if curr[0] < i:
-                hap1_depth += curr[1]
-                hap2_depth += curr[2]
+                if curr[1] != -1:
+                    hap1_depth += curr[1]
+                    hap2_depth += curr[2]
+                else: 
+                    hap2_depth += curr[2]
                 j += 1
             else:
                 break
-        if hap1_depth != 0:
+        if hap1_depth != 0 and hap2_depth != 0:
             depth_sum = hap1_depth + hap2_depth
             res.append([i, hap1_depth/depth_sum, hap2_depth/depth_sum])
-            
+        elif hap1_depth == 0 and hap2_depth != 0:
+            res.append([i, -1, 1])
+        # else:
+        #     print(f"Error in smooth_allele_freq at {i}")
+
     # median_depth = stats.median(total_depth)
     # print(min(total_depth))
     # print(f'median depth: {median_depth}')
@@ -166,40 +183,44 @@ def smooth_copy_number(read_depth, window_num, window_size, avg_depth, overlap_s
         window = int(span/window_num)
     else:
         window = window_size
-    res  = []
-    j = occurence = 0
-    # In order to create a sliding window
-    next_j = 0
-    j_flag = True
     
+    res = []
+    j = k = 0  # counter of current hetVar and homVar
+    hetVar, homVar = hetVar_separator(read_depth)
+
     # window/overlap_size for overlapping sliding
     for i in range(window, span+window, int(window/overlap_size)):
-        occurence = 0
-        hap1_depth = hap2_depth = 0
-        j = next_j
-        j_flag = True
-        while j < len(read_depth):
-            curr = read_depth[j]
-            # Record the next starting j
-            # bug line: if j_flag and curr[0] > i+window/overlap_size:
-            if j_flag and curr[0] >= i:
-                next_j = j
-                j_flag = False
-                break
-            elif curr[0] < i:
+        hap_count = ambi_count = 0
+        hap1_depth = hap2_depth = ambi_depth = 0
+        while j < len(hetVar):
+            curr = hetVar[j]
+            if curr[0] < i:
                 hap1_depth += curr[1]
                 hap2_depth += curr[2]
+                hap_count += 1
                 j += 1
-                occurence += 1
             else:
-                print(f"Error in smooth copy number at position {curr[0]} in bin {i}.")
-        if hap1_depth != 0 or hap2_depth != 0:
-            depth_sum = hap1_depth + hap2_depth
+                break
+        while k < len(homVar):
+            curr = homVar[k]
+            if curr[0] < i:
+                ambi_depth += curr[2]
+                ambi_count += 1
+                k += 1
+            else:
+                break
+
+        if ambi_count > hap_count and hap_count <= 3:
+            res.append([i, -1, ambi_depth/ambi_count/avg_depth])
+        if hap_count > 3:
+            # depth_sum = hap1_depth + hap2_depth
             # avg_depth = depth_sum / occurence / 4
-            res.append([i, hap1_depth/occurence/avg_depth, hap2_depth/occurence/avg_depth])
+            res.append([i, hap1_depth/hap_count/avg_depth, hap2_depth/hap_count/avg_depth])
+        # else:
+        #     print(f"Error in smooth_copy_number at {i}")
     return res
 
-def get_CN_data(vcf_filename, tumor_avg_depth, normal_avg_depth, window_num=None, window_size=1000000, overlap_size=2):
+def get_CN_data(vcf_filename, tumor_avg_depth, normal_avg_depth, window_num=None, window_size=100000, overlap_size=1):
     # fixed size 
     '''
     Without a matched normal, CN and AF are calculated from the position of heterozygous SNP, 
@@ -226,27 +247,27 @@ def get_CN_data(vcf_filename, tumor_avg_depth, normal_avg_depth, window_num=None
     # CN = np.array(CN).T
     return list(CN), list(AF)
 
-def get_tumorCN_matchedNormal(tumor_vcf_filename, tumor_avg_depth, normal_vcf_filename, normal_avg_depth, window_num=None, window_size=1000000, overlap_size=2):
-    '''outdated
-    Tumor sample CN calculated with a matched normal. 
-    New Input:
-        normal_read_depth: the output of read_depth_from_vcf from the matching normal VCF file
-    '''
-    tumor_read_depth, normal_read_depth = read_depth_matchedNormal(tumor_vcf_filename, normal_vcf_filename)
-    if window_num is not None:
-        tumor_CN  = smooth_copy_number(tumor_read_depth, window_num, None, tumor_avg_depth, overlap_size)
-        tumor_AF  = smooth_allele_freq(tumor_read_depth, window_num, None, overlap_size)
-        normal_CN = smooth_copy_number(normal_read_depth, window_num, None, normal_avg_depth, overlap_size)
-        normal_AF = smooth_allele_freq(normal_read_depth, window_num, None, overlap_size)
-    else:
-        tumor_CN  = smooth_copy_number(tumor_read_depth, None, window_size, tumor_avg_depth, overlap_size)
-        tumor_AF  = smooth_allele_freq(tumor_read_depth, None, window_size, overlap_size)
-        normal_CN = smooth_copy_number(normal_read_depth, None, window_size, normal_avg_depth, overlap_size)
-        normal_AF = smooth_allele_freq(normal_read_depth, None, window_size, overlap_size)
-    # tumor_CN = np.array(tumor_CN).T
-    # normal_CN = np.array(normal_CN).T
-    output = [tumor_CN, tumor_AF, normal_CN, normal_AF]
-    return output
+# def get_tumorCN_matchedNormal(tumor_vcf_filename, tumor_avg_depth, normal_vcf_filename, normal_avg_depth, window_num=None, window_size=1000000, overlap_size=2):
+#     '''outdated
+#     Tumor sample CN calculated with a matched normal. 
+#     New Input:
+#         normal_read_depth: the output of read_depth_from_vcf from the matching normal VCF file
+#     '''
+#     tumor_read_depth, normal_read_depth = read_depth_matchedNormal(tumor_vcf_filename, normal_vcf_filename)
+#     if window_num is not None:
+#         tumor_CN  = smooth_copy_number(tumor_read_depth, window_num, None, tumor_avg_depth, overlap_size)
+#         tumor_AF  = smooth_allele_freq(tumor_read_depth, window_num, None, overlap_size)
+#         normal_CN = smooth_copy_number(normal_read_depth, window_num, None, normal_avg_depth, overlap_size)
+#         normal_AF = smooth_allele_freq(normal_read_depth, window_num, None, overlap_size)
+#     else:
+#         tumor_CN  = smooth_copy_number(tumor_read_depth, None, window_size, tumor_avg_depth, overlap_size)
+#         tumor_AF  = smooth_allele_freq(tumor_read_depth, None, window_size, overlap_size)
+#         normal_CN = smooth_copy_number(normal_read_depth, None, window_size, normal_avg_depth, overlap_size)
+#         normal_AF = smooth_allele_freq(normal_read_depth, None, window_size, overlap_size)
+#     # tumor_CN = np.array(tumor_CN).T
+#     # normal_CN = np.array(normal_CN).T
+#     output = [tumor_CN, tumor_AF, normal_CN, normal_AF]
+#     return output
 
 def write2csv(alist, out_filename):
     with open(out_filename, 'w', newline='') as f:
@@ -260,20 +281,20 @@ def get_chrName(filename):
     return chrName
 
 def usage():
-    print("Usage: getTumorCN.py --tumor_read_depth [HiFi read depth of tumor sample] -t [directory to tumor pileup_byChr files]")
+    print("Usage: getTumorCN2.py --tumor_read_depth [HiFi read depth of tumor sample] -f [directory to tumor pileup_byChr files]")
     print("Options:")
-    print("  -w INT      Number of windows for each chromosome")
+    print("  -b INT      Number of window bins for each chromosome")
     print("  -s INT      Number of sliding windows for each bin")
-    print("  -t STR      Directory containing pileup VCF files for one chromosome of tumor sample")
-    print("  -n STR      Directory containing pileup VCF files for one chromosome of matched normal sample")
-    print("  --tumor-read-depth     INT      HiFi read depth of tumor sample")
-    print("  --normal-read-depth    INT      HiFi read depth of matched normal sample")
+    print("  -w INT      Window size for each chromosome")
+    print("  -f STR      Directory containing pileup VCF files for one chromosome of tumor plus normal sample")
+    print("  --tumor-read-depth     INT      average HiFi read depth of tumor sample per chr")
+    print("  --normal-read-depth    INT      sequencing HiFi read depth of matched normal sample")
     print("Note: processed pileup VCF file split by chromosomes should have the format <chrName>.pileup.tsv")
-    print("Provide matched normal sample to resolve CNV in hemizygous regions.")
+    print("Note: this version doesn't support separated matched normal sample to resolve CNV in hemizygous regions.")
 
 def main(argv):
     try:
-        opts, args = getopt.getopt(argv[1:],"f:w:s:", 
+        opts, args = getopt.getopt(argv[1:],"f:w:s:b:", 
                                ["tumor-read-depth=","normal-read-depth="])
     except getopt.GetoptError as err:
         # print help information and exit:
@@ -286,16 +307,21 @@ def main(argv):
         sys.exit(1)
     
     vcf_filenames  = []
+    window_size  = 100000
     window_num   = None
-    overlap_size = 2
+    overlap_size = 1
+    tumor_avg_depth = normal_avg_depth = 0
     for opt, arg in opts:
         if opt == '-f':
             for filename in glob(f'{arg}/chr*.pileup.tsv'):
                 vcf_filenames.append(filename)
-        elif opt == '-w': 
+        elif opt == '-b': 
             print('Dynamic window size instead of static (1Mb)...')
             print(f'Number of windows for each chromosome: {arg}')
-            window_num   = int(arg)
+            window_num = int(arg)
+        elif opt == '-w': 
+            print(f'Window size for each chromosome: {arg}')
+            window_size = int(arg)
         elif opt == '-s': 
             print(f'Number of sliding windows for each bin: {arg}')
             overlap_size = int(arg)
@@ -311,7 +337,7 @@ def main(argv):
             print(filename)
             chrName = get_chrName(filename)
             # getCN&AF
-            tumor_CN,tumor_AF = get_CN_data(filename, tumor_avg_depth, normal_avg_depth, window_num=window_num, overlap_size=overlap_size)
+            tumor_CN,tumor_AF = get_CN_data(filename, tumor_avg_depth, normal_avg_depth, window_size=window_size, window_num=window_num, overlap_size=overlap_size)
             write2csv(tumor_CN, f'{chrName}.tumor.CN.tsv')
             write2csv(tumor_AF, f'{chrName}.tumor.AF.tsv')
 

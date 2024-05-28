@@ -1,3 +1,8 @@
+import csv
+import sys
+from collections import defaultdict
+from collections import Counter
+
 def parse_ctgpaf(line, ctglen_thres, ctgspan_thres, mq_thres):
     '''
     Return a list of attributes from a line of paf file. Filter out if the total contig length,
@@ -34,12 +39,12 @@ def sort_ctg_in_chrom(ctg_pafs):
 def get_overlapRatio(A_start, A_end, B_start, B_end):
     '''calculate the overlap ratio between to sequence blocks A and B
     '''
-    union   = max(A_end, B_end) - min(A_start, B_start) #useless variable...
+    union   = max(A_end, B_end) - min(A_start, B_start)
     overlap = min(A_end, B_end) - max(A_start, B_start)
     if overlap <= 0:
         # There is NO overlap
         return 0
-    return overlap / (A_end - A_start)
+    return overlap/union
 
 def ctg_not_in_censat(ctg_paf, chr_censat_dict, overlap_thres = 0.9):
     '''return True if contig alignment block is not in censat regions (default overlap>0.9), False otherwise.'''
@@ -50,10 +55,9 @@ def ctg_not_in_censat(ctg_paf, chr_censat_dict, overlap_thres = 0.9):
 
         for censat in censat_regions:
             B_start, B_end = censat
-            B_start = min(B_start, abs(B_start-500000))
-            B_end = B_end + 500000
             if get_overlapRatio(A_start, A_end, B_start, B_end) > overlap_thres:
                 return False
+    
     return True
 
 def ctg_pass_multimap_filter(ctg_paf, ctg_mapcnt_dict, chr_censat_dict, len_thres = 25000):
@@ -61,14 +65,10 @@ def ctg_pass_multimap_filter(ctg_paf, ctg_mapcnt_dict, chr_censat_dict, len_thre
     False otherwise. 
     Criteria: 
     1) spans across at least two chromosome; 2) not in centromeric regions; 
-    3) the block length is at least 25000 bp by default, but ctglen_thres is always passed through
-    4) if the alignment block is in telomere and subtelomeric regions
-    5) if the alignment block is in acrocentric p-arm of chr13,14,15,21,22'''
+    3) the block length is at least 25000 bp by default'''
     flag = False
-    if ctg_paf[5] not in ctg_mapcnt_dict[ctg_paf[0]] and ctg_not_in_censat(ctg_paf, chr_censat_dict):
-        if ctg_paf[3]-ctg_paf[2] > len_thres and ctg_paf[8] > 500000 and ctg_paf[8] < ctg_paf[6] - 500000:
-            flag = True
-
+    if ctg_paf[5] not in ctg_mapcnt_dict[ctg_paf[0]] and ctg_not_in_censat(ctg_paf, chr_censat_dict) and ctg_paf[3]-ctg_paf[2] > len_thres:
+        flag = True
     return flag
 
 def split_by_chrom_helper(paf_filename, bed_filename, ctglen_thres, ctgspan_thres, mq_thres):
@@ -146,71 +146,25 @@ def split_by_chrom_utg(paf_filename, bed_filename, utglen_thres = 20000, utgspan
                 f.write(f'{ctgName}\t{chrName}\n')
     return None
 
-def usage():
-    print("Usage: pafSplit.py -f paf_filename -b bed_filename")
-    print("  -l INT      contig/unitig length threshold")
-    print("  -s INT      contig/unitig span threshold")
-    print("  -m INT      mapping quality threshold")
-    print("  -f STR      paf file to be split")
-    print("  -b STR      bed file containing difficult regions")
-    print("Note: .")
+argv = sys.argv
+if len(argv) <= 1:
+    print('Usage: pafSplit.py [paf_filenames] bed_filename')
+    sys.exit(1)
 
-def main(argv):
-    try:
-        opts, args = getopt.getopt(argv[1:],"l:s:m:f:b:")
-    except getopt.GetoptError as err:
-        # print help information and exit:
-        print(err)  # will print something like "option -a not recognized"
-        usage()
-        sys.exit(2)
+# get paf_filenames and bed_filename
+ctgpaf_filenames = []
+utgpaf_filenames = []
+bed_filename     = None
+for filename in argv[1:]:
+    if 'ctg' in filename:
+        ctgpaf_filenames.append(filename)
+    if 'utg' in filename:
+        utgpaf_filenames.append(filename)
+    if 'bed' in filename:
+        bed_filename = filename
 
-    if len(opts) < 1:
-        usage()
-        sys.exit(1)
-
-    # get paf_filenames, bed_filename, and parameters if specified
-    ctgpaf_filename = utgpaf_filename = None
-    bed_filename    = None
-    len_thres = span_thres = mq_thres = 0
-    l_flag = s_flag = m_flag = False
-    for opt, arg in opts:
-        if opt == '-f':
-            if 'ctg' in arg:
-                ctgpaf_filename = arg
-            if 'utg' in arg:
-                utgpaf_filename = arg
-        elif opt == '-b':
-            bed_filename = arg
-        elif opt == '-l': 
-            print(f'Length threshold is set to: {arg}')
-            len_thres = int(arg)
-            l_flag = True
-        elif opt == '-s': 
-            print(f'Span threshold is set to: {arg}')
-            span_thres = int(arg)
-            s_flag = True
-        elif opt == '-m': 
-            print(f'Mapping quality threshold is set to: {arg}')
-            mq_thres = int(arg)
-            m_flag = True
-        
-    print(f'Running {argv[0]} on contig file(s) {ctgpaf_filename}, unitig file {utgpaf_filename}')
-    if ctgpaf_filename is not None:
-        if not l_flag: len_thres = 50000
-        if not s_flag: span_thres = 50000
-        if not m_flag: mq_thres = 2
-        split_by_chrom(ctgpaf_filename, bed_filename, ctglen_thres = len_thres, ctgspan_thres = span_thres, mq_thres = mq_thres)
-    if utgpaf_filename is not None:
-        if not l_flag: len_thres = 20000
-        if not s_flag: span_thres = 10000
-        if not m_flag: mq_thres = 2
-        split_by_chrom_utg(utgpaf_filename, bed_filename, utglen_thres = len_thres, utgspan_thres = span_thres, mq_thres = mq_thres)
-
-if __name__ == "__main__":
-    import os
-    import csv
-    import sys
-    import getopt
-    from collections import defaultdict
-    from collections import Counter
-    main(sys.argv)
+print(f'Running {argv[0]} on contig file(s) {ctgpaf_filenames}, unitig files {utgpaf_filenames}')
+for filename in ctgpaf_filenames:
+    split_by_chrom(filename, bed_filename)
+for filename in utgpaf_filenames:
+    split_by_chrom_utg(filename, bed_filename)
